@@ -8,6 +8,7 @@ export default class GameRoom {
     this.players = {}; // Key: socketId, Value: PlayerData
     this.hostId = null;
     this.state = 'LOBBY'; // LOBBY, CONFIG, GENERATING, PLAYING
+    this.settings = { numVerses: 8 };
     this.onEmpty = onEmpty;
   }
 
@@ -70,10 +71,19 @@ export default class GameRoom {
         try {
           const accessToken = await plaidService.exchangePublicToken(data.publicToken);
           player.accessTokens.push(accessToken);
-          player.socket.send(JSON.stringify({ type: 'TOKEN_EXCHANGED' }));
+          player.socket.send(JSON.stringify({ type: 'TOKEN_EXCHANGED', accessToken }));
           this.broadcastState();
         } catch (e) {
           player.socket.send(JSON.stringify({ type: 'ERROR', message: 'Failed to link bank' }));
+        }
+        break;
+
+      case 'RESTORE_ACCESS_TOKENS':
+        if (data.accessTokens && Array.isArray(data.accessTokens)) {
+          // Add only unique tokens
+          const newTokens = data.accessTokens.filter(t => !player.accessTokens.includes(t));
+          player.accessTokens.push(...newTokens);
+          this.broadcastState();
         }
         break;
 
@@ -83,9 +93,20 @@ export default class GameRoom {
         this.checkLobbyReady();
         break;
 
+      case 'START_PLAYBACK':
+        this.broadcast({ type: 'START_PLAYBACK' });
+        break;
+
       case 'SUBMIT_VERSES':
-        player.versesConfig = data.verses; // Array of 8 configs
+        player.versesConfig = data.verses; // Array of configs
         this.checkVersesReady();
+        break;
+
+      case 'SET_SETTINGS':
+        if (socketId === this.hostId) {
+          this.settings.numVerses = data.numVerses;
+          this.broadcastState();
+        }
         break;
     }
   }
@@ -124,33 +145,97 @@ export default class GameRoom {
       p2.financialData = await plaidService.getFinancialData(p2.accessTokens);
 
       // Generate Prompts
-      const p1Prompts = p1.versesConfig.map(config => this.buildPrompt(config, p1, p2));
-      const p2Prompts = p2.versesConfig.map(config => this.buildPrompt(config, p2, p1));
+      const p1PromptsData = p1.versesConfig.map(config => this.buildPrompt(config, p1, p2));
+      const p2PromptsData = p2.versesConfig.map(config => this.buildPrompt(config, p2, p1));
 
-      // Call Gemini
-      const { player1Verses, player2Verses } = await geminiService.generateAllVerses(p1Prompts, p2Prompts);
+      const p1Prompts = p1PromptsData.map(d => d.prompt);
+      const p2Prompts = p2PromptsData.map(d => d.prompt);
+      
+      const p1Contexts = p1PromptsData.map(d => d.context);
+      const p2Contexts = p2PromptsData.map(d => d.context);
+
+      let versesGenerated = 0;
+      let audioGenerated = 0;
+
+      const broadcastProgress = () => {
+        this.broadcast({
+          type: 'GENERATION_PROGRESS',
+          versesGenerated,
+          audioGenerated,
+          total: this.settings.numVerses * 2
+        });
+      };
+
+      // Call Gemini for verses
+      const { player1Verses, player2Verses } = await geminiService.generateAllVerses(p1Prompts, p2Prompts, () => {
+        versesGenerated++;
+        broadcastProgress();
+      });
+
+      const p1Voice = 'Puck'; // Male voice
+      const p2Voice = 'Aoede'; // Female voice
 
       // Prepare interleaved lyrics
       const battleSequence = [];
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < this.settings.numVerses; i++) {
         battleSequence.push({
           playerId: playerIds[0],
           nickname: p1.nickname,
           name: p1.name,
-          verse: player1Verses[i]
+          voice: p1Voice,
+          ttsPrompt: Prompts.PROMPT_TTS_PLAYER1,
+          lines: player1Verses[i].split('\n').filter(l => l.trim() !== ''),
+          context: p1Contexts[i],
+          audioData: null
         });
         battleSequence.push({
           playerId: playerIds[1],
           nickname: p2.nickname,
           name: p2.name,
-          verse: player2Verses[i]
+          voice: p2Voice,
+          ttsPrompt: Prompts.PROMPT_TTS_PLAYER2,
+          lines: player2Verses[i].split('\n').filter(l => l.trim() !== ''),
+          context: p2Contexts[i],
+          audioData: null
         });
       }
 
+      // Generate audio chunks for all verses in batches of 2
+      // Gemini TTS quota is 10 requests/minute, so we throttle carefully
+      const BATCH_SIZE = 2;
+      for (let i = 0; i < battleSequence.length; i += BATCH_SIZE) {
+        const batch = battleSequence.slice(i, i + BATCH_SIZE);
+        const batchPromises = batch.map(verseObj => {
+          const fullVerseText = verseObj.lines.join('\n');
+          return geminiService.generateAudioForVerse(fullVerseText, verseObj.voice, verseObj.ttsPrompt).then(wavDataUri => {
+            verseObj.audioData = wavDataUri;
+            audioGenerated++;
+            broadcastProgress();
+          });
+        });
+        await Promise.all(batchPromises);
+
+        // Pause between batches to avoid hitting 10 RPM rate limit
+        if (i + BATCH_SIZE < battleSequence.length) {
+          await new Promise(resolve => setTimeout(resolve, 6000));
+        }
+      }
+
       this.state = 'PLAYING';
+
+      // Debug: check audio data presence before broadcasting
+      battleSequence.forEach((v, i) => {
+        if (!v.audioData) {
+          console.error(`[GameRoom] WARN: verse ${i} (${v.nickname}) has null audioData!`);
+        } else {
+          console.log(`[GameRoom] Verse ${i} audioData OK, prefix: ${v.audioData.substring(0, 40)}`);
+        }
+      });
+
       this.broadcast({
         type: 'GAME_READY',
-        sequence: battleSequence
+        sequence: battleSequence,
+        beatSeed: Math.random()
       });
 
     } catch (e) {
@@ -161,33 +246,52 @@ export default class GameRoom {
 
   buildPrompt(config, me, opponent) {
     let template = '';
+    let context = { type: config.topic };
     
     if (config.type === 'BRAG') {
-      if (config.topic === 'NET_WORTH') template = Prompts.PROMPT_BRAG_NET_WORTH;
-      else if (config.topic === 'PURCHASES') template = Prompts.PROMPT_BRAG_PURCHASES;
-      else if (config.topic === 'INCOME') template = Prompts.PROMPT_BRAG_INCOME;
-      else if (config.topic === 'SPENDING_HABITS') template = Prompts.PROMPT_BRAG_SPENDING_HABITS;
+      if (config.topic === 'NET_WORTH') {
+        template = Prompts.PROMPT_BRAG_NET_WORTH;
+        context.data = me.financialData.netWorth;
+      } else if (config.topic === 'PURCHASES') {
+        template = Prompts.PROMPT_BRAG_PURCHASES;
+        context.data = me.financialData.recentPurchases;
+      } else if (config.topic === 'INCOME') {
+        template = Prompts.PROMPT_BRAG_INCOME;
+        context.data = me.financialData.incomeSources;
+      } else if (config.topic === 'SPENDING_HABITS') {
+        template = Prompts.PROMPT_BRAG_SPENDING_HABITS;
+        context.data = me.financialData.spendingCategories;
+      }
       
       template = template
         .replace('{{NET_WORTH}}', me.financialData.netWorth)
-        .replace('{{RECENT_PURCHASES}}', me.financialData.recentPurchases.join(', '))
+        .replace('{{RECENT_PURCHASES}}', me.financialData.recentPurchases.map(p => `${p.name} ($${Math.round(p.amount)})`).join(', '))
         .replace('{{INCOME_SOURCES}}', me.financialData.incomeSources.join(', '))
-        .replace('{{SPENDING_CATEGORIES}}', me.financialData.spendingCategories.join(', '));
+        .replace('{{SPENDING_CATEGORIES}}', me.financialData.spendingCategories.map(c => `${c.category} ($${Math.round(c.amount)})`).join(', '));
     } else {
-      if (config.topic === 'NET_WORTH') template = Prompts.PROMPT_DISS_NET_WORTH;
-      else if (config.topic === 'PURCHASES') template = Prompts.PROMPT_DISS_PURCHASES;
-      else if (config.topic === 'INCOME') template = Prompts.PROMPT_DISS_INCOME;
-      else if (config.topic === 'SPENDING_HABITS') template = Prompts.PROMPT_DISS_SPENDING_HABITS;
+      if (config.topic === 'NET_WORTH') {
+        template = Prompts.PROMPT_DISS_NET_WORTH;
+        context.data = opponent.financialData.netWorth;
+      } else if (config.topic === 'PURCHASES') {
+        template = Prompts.PROMPT_DISS_PURCHASES;
+        context.data = opponent.financialData.recentPurchases;
+      } else if (config.topic === 'INCOME') {
+        template = Prompts.PROMPT_DISS_INCOME;
+        context.data = opponent.financialData.incomeSources;
+      } else if (config.topic === 'SPENDING_HABITS') {
+        template = Prompts.PROMPT_DISS_SPENDING_HABITS;
+        context.data = opponent.financialData.spendingCategories;
+      }
 
       template = template
         .replace(/{{OPPONENT_NICKNAME}}/g, opponent.nickname)
         .replace('{{OPPONENT_NET_WORTH}}', opponent.financialData.netWorth)
-        .replace('{{OPPONENT_RECENT_PURCHASES}}', opponent.financialData.recentPurchases.join(', '))
+        .replace('{{OPPONENT_RECENT_PURCHASES}}', opponent.financialData.recentPurchases.map(p => `${p.name} ($${Math.round(p.amount)})`).join(', '))
         .replace('{{OPPONENT_INCOME_SOURCES}}', opponent.financialData.incomeSources.join(', '))
-        .replace('{{OPPONENT_SPENDING_CATEGORIES}}', opponent.financialData.spendingCategories.join(', '));
+        .replace('{{OPPONENT_SPENDING_CATEGORIES}}', opponent.financialData.spendingCategories.map(c => `${c.category} ($${Math.round(c.amount)})`).join(', '));
     }
 
-    return template;
+    return { prompt: template, context };
   }
 
   broadcast(messageObj) {
@@ -211,7 +315,8 @@ export default class GameRoom {
     this.broadcast({
       type: 'STATE_UPDATE',
       state: this.state,
-      players: playersInfo
+      players: playersInfo,
+      settings: this.settings
     });
   }
 

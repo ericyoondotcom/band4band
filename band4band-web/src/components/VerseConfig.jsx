@@ -8,10 +8,15 @@ const TOPICS = [
   { id: 'SPENDING_HABITS', label: 'Spending Habits' }
 ];
 
-export default function VerseConfig({ players }) {
-  // Array of 8 configs, default to BRAG and NET_WORTH
-  const [verses, setVerses] = useState(
-    Array(8).fill(null).map(() => ({ type: 'BRAG', topic: 'NET_WORTH' }))
+const TYPES = ['BRAG', 'DISS'];
+
+export default function VerseConfig({ players, settings }) {
+  // Array of configs, default to random type and topic
+  const [verses, setVerses] = useState(() => 
+    Array(settings?.numVerses || 8).fill(null).map(() => ({ 
+      type: TYPES[Math.floor(Math.random() * TYPES.length)], 
+      topic: TOPICS[Math.floor(Math.random() * TOPICS.length)].id 
+    }))
   );
   const [submitted, setSubmitted] = useState(false);
 
@@ -42,7 +47,7 @@ export default function VerseConfig({ players }) {
     <div className="flex-col glass-panel" style={{ margin: 'auto', maxWidth: '1000px', width: '100%' }}>
       <h2 className="text-center">Configure Your Verses</h2>
       <p className="text-center" style={{ opacity: 0.8, marginBottom: '2rem' }}>
-        Plan your attack. You have 8 verses. Brag about yourself or diss your opponent.
+        Plan your attack. You have {settings?.numVerses || 8} verses. Brag about yourself or diss your opponent.
       </p>
 
       <div className="grid-2">

@@ -1,5 +1,14 @@
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 
+function normalizeCategory(categoryStr) {
+  if (!categoryStr) return '';
+  return categoryStr
+    .toLowerCase()
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 class PlaidService {
   constructor() {
     const configuration = new Configuration({
@@ -67,11 +76,11 @@ class PlaidService {
     try {
       let netWorth = 0;
       const spendingCategories = {};
-      const incomeSources = new Set();
+      const incomeSources = [];
       const recentPurchases = [];
 
       const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30);
+      startDate.setDate(startDate.getDate() - 14); // Changed to 2 weeks
       const endDate = new Date();
       
       const promises = accessTokens.map(async (token) => {
@@ -88,22 +97,49 @@ class PlaidService {
           }
         });
 
-        // Get Transactions
+        // Get Transactions (14 days for spending/purchases)
         const transactionsResponse = await this.client.transactionsGet({
           access_token: token,
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0],
         });
 
+        // Get Income Transactions (60 days — paychecks may not come every 2 weeks)
+        const incomeStartDate = new Date();
+        incomeStartDate.setDate(incomeStartDate.getDate() - 60);
+        const incomeResponse = await this.client.transactionsGet({
+          access_token: token,
+          start_date: incomeStartDate.toISOString().split('T')[0],
+          end_date: endDate.toISOString().split('T')[0],
+        });
+
+        // Process spending/purchases (require merchant_name for quality)
         transactionsResponse.data.transactions.forEach(tx => {
+          if (!tx.merchant_name) return;
+
           if (tx.amount > 0) {
-            // Spending
-            const category = tx.category ? tx.category[0] : 'General';
-            spendingCategories[category] = (spendingCategories[category] || 0) + tx.amount;
-            recentPurchases.push({ name: tx.name, amount: tx.amount });
-          } else if (tx.amount < 0) {
-            // Income
-            incomeSources.add(tx.name);
+            let category = 'General';
+            if (tx.personal_finance_category && tx.personal_finance_category.detailed) {
+              category = tx.personal_finance_category.detailed;
+            } else if (tx.category && tx.category.length > 0) {
+              category = tx.category[0];
+            }
+            
+            if (!category.toUpperCase().includes('GENERAL')) {
+              const cleanCategory = normalizeCategory(category);
+              spendingCategories[cleanCategory] = (spendingCategories[cleanCategory] || 0) + tx.amount;
+            }
+            recentPurchases.push({ name: tx.merchant_name, amount: tx.amount });
+          }
+        });
+
+        // Process income separately — use tx.name as fallback since payroll often lacks merchant_name
+        incomeResponse.data.transactions.forEach(tx => {
+          if (tx.amount < 0) {
+            const sourceName = tx.merchant_name || tx.name;
+            if (sourceName) {
+              incomeSources.push({ name: sourceName, amount: Math.abs(tx.amount) });
+            }
           }
         });
       });
@@ -113,18 +149,28 @@ class PlaidService {
       // Sort categories and purchases
       const topCategories = Object.entries(spendingCategories)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(entry => entry[0]);
+        .slice(0, 5) // Top 5 categories
+        .map(entry => ({ category: entry[0], amount: entry[1] }));
       
-      const topPurchases = recentPurchases
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 5)
-        .map(p => p.name);
+      // Randomly sample 5 purchases
+      const randomPurchases = recentPurchases
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 5);
+
+      // Deduplicate income sources: group by name, sum amounts, take top 3 unique sources
+      const incomeByName = {};
+      incomeSources.forEach(({ name, amount }) => {
+        incomeByName[name] = (incomeByName[name] || 0) + amount;
+      });
+      const topIncome = Object.entries(incomeByName)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([name]) => name);
 
       return {
         netWorth: Math.round(netWorth),
-        recentPurchases: topPurchases,
-        incomeSources: Array.from(incomeSources).slice(0, 3),
+        recentPurchases: randomPurchases,
+        incomeSources: topIncome,
         spendingCategories: topCategories,
       };
 
@@ -133,9 +179,9 @@ class PlaidService {
       // Fallback data in case of error so game doesn't crash
       return {
         netWorth: 0,
-        recentPurchases: ['Nothing'],
+        recentPurchases: [{ name: 'Nothing', amount: 0 }],
         incomeSources: ['Unemployed'],
-        spendingCategories: ['Nothing'],
+        spendingCategories: [{ category: 'Nothing', amount: 0 }],
       };
     }
   }

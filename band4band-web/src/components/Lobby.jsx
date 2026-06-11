@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { wsClient } from '../utils/websocket';
 
-export default function Lobby({ roomCode, players }) {
+export default function Lobby({ roomCode, players, settings }) {
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
   const [linkToken, setLinkToken] = useState(null);
@@ -21,9 +21,31 @@ export default function Lobby({ roomCode, players }) {
       .catch(console.error);
   }, []);
 
-  // Fetch initial token
+  // Fetch initial token and restore cached tokens
   useEffect(() => {
     fetchLinkToken();
+
+    // Check localStorage for existing tokens
+    const cachedTokens = JSON.parse(localStorage.getItem('plaid_access_tokens') || '[]');
+    if (cachedTokens.length > 0) {
+      wsClient.send({
+        type: 'RESTORE_ACCESS_TOKENS',
+        accessTokens: cachedTokens
+      });
+    }
+
+    // Listen for new tokens to cache them
+    const unsub = wsClient.on('TOKEN_EXCHANGED', (data) => {
+      if (data.accessToken) {
+        const currentTokens = JSON.parse(localStorage.getItem('plaid_access_tokens') || '[]');
+        if (!currentTokens.includes(data.accessToken)) {
+          currentTokens.push(data.accessToken);
+          localStorage.setItem('plaid_access_tokens', JSON.stringify(currentTokens));
+        }
+      }
+    });
+
+    return () => unsub();
   }, [fetchLinkToken]);
 
   const onSuccess = useCallback((public_token) => {
@@ -112,6 +134,31 @@ export default function Lobby({ roomCode, players }) {
               </span>
             </div>
           ))}
+        </div>
+
+        <div className="mt-8 text-center glass-panel" style={{ width: '100%', background: 'rgba(0,0,0,0.4)' }}>
+          <h3>Game Settings</h3>
+          <div className="flex-center mt-4">
+            {players.find(p => p.isHost && p.nickname === nickname) ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <span style={{ fontSize: '1.2rem' }}>Number of Verses (Per Player):</span>
+                <select 
+                  value={settings?.numVerses || 8} 
+                  onChange={(e) => wsClient.send({ type: 'SET_SETTINGS', numVerses: parseInt(e.target.value) })}
+                  style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '1.2rem' }}
+                >
+                  <option value={4}>4 Verses</option>
+                  <option value={6}>6 Verses</option>
+                  <option value={8}>8 Verses</option>
+                  <option value={10}>10 Verses</option>
+                </select>
+              </div>
+            ) : (
+              <div style={{ fontSize: '1.2rem' }}>
+                Number of Verses (Per Player): <strong>{settings?.numVerses || 8}</strong> <span style={{ opacity: 0.6 }}>(Host is configuring)</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="mt-8">

@@ -174,3 +174,86 @@ input:focus {
 .animate-float {
   animation: float 6s ease-in-out infinite;
 }
+
+/* Battle Layout */
+.battle-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-grow: 1;
+  align-items: center;
+}
+
+.battle-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4rem;
+  height: 100%;
+}
+
+.battle-half.left-side {
+  text-align: left;
+  align-items: flex-start;
+}
+
+.battle-half.right-side {
+  text-align: right;
+  align-items: flex-end;
+}
+
+/* Fact-Check Popup */
+.fact-check-popup {
+  width: 100%;
+  max-width: 400px;
+  background: rgba(5, 5, 5, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--theme-main);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 0 30px var(--theme-glow);
+  animation: slideIn 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  text-align: left;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.fact-check-popup h3 {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--theme-light);
+  margin-bottom: 0.5rem;
+  opacity: 0.9;
+}
+
+.fact-check-value.number {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 0 15px var(--theme-glow);
+  letter-spacing: -1px;
+}
+
+.fact-check-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.fact-check-list li {
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border-left: 4px solid var(--theme-main);
+}
