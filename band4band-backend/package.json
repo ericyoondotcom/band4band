@@ -1,0 +1,19 @@
+{
+  "name": "band4band-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "dotenv": "^17.4.2",
+    "plaid": "^42.2.0",
+    "ws": "^8.21.0"
+  }
+}
