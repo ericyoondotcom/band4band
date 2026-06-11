@@ -2,20 +2,19 @@ import { useState } from 'react';
 import { wsClient } from '../utils/websocket';
 
 const TOPICS = [
-  { id: 'NET_WORTH', label: 'Net Worth' },
-  { id: 'PURCHASES', label: 'Recent Purchases' },
-  { id: 'INCOME', label: 'Income Sources' },
-  { id: 'SPENDING_HABITS', label: 'Spending Habits' }
+  { id: 'NET_WORTH', label: '💰 Net Worth' },
+  { id: 'PURCHASES', label: '🛒 Purchases' },
+  { id: 'INCOME', label: '💵 Income' },
+  { id: 'SPENDING_HABITS', label: '🔥 Spending' }
 ];
 
 const TYPES = ['BRAG', 'DISS'];
 
 export default function VerseConfig({ players, settings }) {
-  // Array of configs, default to random type and topic
-  const [verses, setVerses] = useState(() => 
-    Array(settings?.numVerses || 8).fill(null).map(() => ({ 
-      type: TYPES[Math.floor(Math.random() * TYPES.length)], 
-      topic: TOPICS[Math.floor(Math.random() * TOPICS.length)].id 
+  const [verses, setVerses] = useState(() =>
+    Array(settings?.numVerses || 8).fill(null).map(() => ({
+      type: TYPES[Math.floor(Math.random() * TYPES.length)],
+      topic: TOPICS[Math.floor(Math.random() * TOPICS.length)].id
     }))
   );
   const [submitted, setSubmitted] = useState(false);
@@ -27,62 +26,55 @@ export default function VerseConfig({ players, settings }) {
   };
 
   const handleSubmit = () => {
-    wsClient.send({
-      type: 'SUBMIT_VERSES',
-      verses
-    });
+    wsClient.send({ type: 'SUBMIT_VERSES', verses });
     setSubmitted(true);
   };
 
   if (submitted) {
     return (
-      <div className="flex-col flex-center glass-panel" style={{ margin: 'auto' }}>
-        <h2>Verses Locked In.</h2>
-        <p>Waiting for your opponent to finish their configuration...</p>
+      <div className="config-screen">
+        <h1 className="glitch-text" data-text="LOCKED">LOCKED</h1>
+        <p className="wait-text">waiting on your opponent...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-col glass-panel" style={{ margin: 'auto', maxWidth: '1000px', width: '100%' }}>
-      <h2 className="text-center">Configure Your Verses</h2>
-      <p className="text-center" style={{ opacity: 0.8, marginBottom: '2rem' }}>
-        Plan your attack. You have {settings?.numVerses || 8} verses. Brag about yourself or diss your opponent.
-      </p>
+    <div className="config-screen">
+      <h2>PLAN YOUR ATTACK</h2>
 
-      <div className="grid-2">
+      <div className="verse-stack">
         {verses.map((verse, idx) => (
-          <div key={idx} className="glass-panel" style={{ padding: '1.5rem' }}>
-            <h3 style={{ marginBottom: '1rem' }}>Verse {idx + 1}</h3>
-            <div className="flex-col gap-4">
-              <select 
-                value={verse.type} 
-                onChange={e => updateVerse(idx, 'type', e.target.value)}
-                style={{ padding: '0.8rem', background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--border)', borderRadius: '8px' }}
-              >
-                <option value="BRAG">Brag (About Me)</option>
-                <option value="DISS">Diss (About Opponent)</option>
-              </select>
-              
-              <select 
-                value={verse.topic} 
-                onChange={e => updateVerse(idx, 'topic', e.target.value)}
-                style={{ padding: '0.8rem', background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--border)', borderRadius: '8px' }}
-              >
-                {TOPICS.map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))}
-              </select>
-            </div>
+          <div key={idx} className={`verse-sentence ${verse.type === 'BRAG' ? 'p2-text' : 'p1-text'}`}>
+            <span className="verse-sentence-num">#{idx + 1}</span>
+            
+            <select
+              className="inline-select"
+              value={verse.type}
+              onChange={e => updateVerse(idx, 'type', e.target.value)}
+            >
+              <option value="BRAG">Brag</option>
+              <option value="DISS">Diss</option>
+            </select>
+
+            <span className="verse-sentence-static"> about </span>
+            
+            <select
+              className="inline-select"
+              value={verse.topic}
+              onChange={e => updateVerse(idx, 'topic', e.target.value)}
+            >
+              {TOPICS.map(t => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
           </div>
         ))}
       </div>
 
-      <div className="flex-center mt-8">
-        <button className="primary" onClick={handleSubmit} style={{ fontSize: '1.5rem', padding: '1rem 4rem' }}>
-          LOCK IN
-        </button>
-      </div>
+      <button className="primary big" onClick={handleSubmit}>
+        LOCK IN 🔒
+      </button>
     </div>
   );
 }

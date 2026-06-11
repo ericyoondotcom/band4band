@@ -1,0 +1,68 @@
+# band4band
+
+Band4Band is a networked game where you have a rap battle with your opps using an LLM and the Plaid API.
+
+Tech stack: NodeJS backend, React (Vite), Websockets
+
+## Gameplay Overview
+
+On the website's homepage, there's options to host a game or join a game. If you host a game, a code of 6 letters will appear, and you'll be redirected to the path with the game code. If you join a game, you can enter the host's game code.
+
+Once you have two players in a game, you and your friend use Plaid Link to link any relevant bank/credit card accounts. We will use the Plaid Transactions and Plaid Balance APIs.
+
+The player enters some basic info like their first name and their rapper nickname.
+
+Then, each player customizes 8 verses each, for 16 verses total that are interleaved. Each verse contains 4 lines that use an A-B-A-B rhyme structure.
+
+You can customize the theme of each verse. You select whether it'll be a brag or a diss, and then you can choose brag/diss topics:
+
+Brag about:
+- My net worth
+- My big purchases
+- My income
+- My spending habits (based on Plaid transaction categories)
+
+Diss their:
+- Net worth
+- Recent purchases
+- Income
+- Spending habits (based on Plaid transaction categories)
+
+Finally, when both players have made selections, the backend will call the Gemini API to have it the total 16 verses. Of course, the data from Plaid will be inserted into the prompt via string templating. Each verse should be a different, parallelized query to Gemini.
+
+When the LLM is done, the players can hit "play" and the rap battle commences. Hip hop music (which should be chosen at random from a folder containing mp3s) will start playing in both clients' browsers. Using the Web Speech API, each verse is read aloud. BPM info about each mp3 file is provided by the developer in a JSON file, so that the TTS can be timed with the bars of the music.
+
+## Networking Architecture
+
+Each player's web browser will connect to the backend via websockets.
+
+The only thing that the web browsers send to the server are (1) the auth token from Plaid Link, (2) info like name and nickname, and (3) their choices for brag/diss topics for each verse. The server dos all the Plaid API and LLM API calling. This way API keys are not exposed to the clients.
+
+
+When a game is over, *all data related to the game should be deleted.* This means that all game data, including any financial data obtained from Plaid, should be stored in RAM! This project should not utilize any databases of any sort.
+
+## Visual Style
+
+The website should draw inspiration from hip hop, so choose fonts accordingly. The actual rap battle will be accompanied with bold visuals (DOM, not HTML5 canvas). Each word will be highlighted as it is spoken, just like the Apple Music lyrics page.
+
+Each player is assigned a theme color based on their name. Their UI is themed with varying shades of their personal color.
+
+Overall, go big and bold; fun rather than professional.
+
+## Codebase Architecture
+
+All LLM prompts should use a standard string templating format. There should be a unique prompt for each diss/brag verse type. These prompts should all live in their own dedicated prompts.js file. For example, you might have a string constant that's `const PROMPT_BRAG_NET_WORTH = "Brag about your net worth of {{NET_WORTH}} dollars."`
+
+All API keys will live in the backend in a `.env` file.
+
+Backend lives in `band4band-backend`, frontend lives in `band4band-web`.
+
+## Code Style
+
+For the backend, prefer object-oriented design. For example, there should be a singleton-pattern class that interfaces with the Plaid API, another singleton class for the Gemini API, etc.
+
+Do not leave excessive comments! Only leave comments if something would be unclear, even for a senior SWE.
+
+## Documentation
+
+Edit README.md with instructions on how to run the app locally. Assume the reader is proficient in the tech stack; do not overexplain.

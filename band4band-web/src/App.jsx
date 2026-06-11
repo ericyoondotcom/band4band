@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { wsClient } from './utils/websocket';
 import Home from './components/Home';
 import Lobby from './components/Lobby';
@@ -7,7 +7,7 @@ import VerseConfig from './components/VerseConfig';
 import BattleArena from './components/BattleArena';
 
 function GameFlow() {
-  const [gameState, setGameState] = useState('HOME'); // HOME, LOBBY, CONFIG, GENERATING, PLAYING
+  const [gameState, setGameState] = useState('HOME');
   const [roomCode, setRoomCode] = useState('');
   const [players, setPlayers] = useState([]);
   const [settings, setSettings] = useState({ numVerses: 8 });
@@ -47,7 +47,7 @@ function GameFlow() {
     });
 
     const unsubDisconnect = wsClient.on('DISCONNECT', () => {
-      alert("Disconnected from server. Game over.");
+      alert("Disconnected.");
       setGameState('HOME');
       setRoomCode('');
       setPlayers([]);
@@ -66,20 +66,15 @@ function GameFlow() {
     };
   }, []);
 
-  // Dynamically set hue based on first player's name if available
-  useEffect(() => {
-    if (players.length > 0 && players[0].name) {
-      const hash = players[0].name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const hue = hash % 360;
-      document.documentElement.style.setProperty('--player-hue', hue);
-    }
-  }, [players]);
+  const totalSteps = (settings.numVerses || 8) * 2;
+  const versesPct = Math.round((versesGenerated / totalSteps) * 100);
+  const audioPct = Math.round((audioGenerated / totalSteps) * 100);
 
   return (
-    <div className="container">
-      <button 
-        onClick={() => setIsMuted(!isMuted)} 
-        style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'transparent', border: 'none', fontSize: '2rem', cursor: 'pointer', zIndex: 1000 }}
+    <div className="app-shell">
+      <button
+        className="mute-btn"
+        onClick={() => setIsMuted(!isMuted)}
         title="Toggle Mute"
       >
         {isMuted ? '🔇' : '🔊'}
@@ -89,27 +84,23 @@ function GameFlow() {
       {gameState === 'LOBBY' && <Lobby roomCode={roomCode} players={players} settings={settings} />}
       {gameState === 'CONFIG' && <VerseConfig players={players} settings={settings} />}
       {gameState === 'GENERATING' && (
-        <div className="flex-col flex-center glass-panel animate-float" style={{ margin: 'auto', maxWidth: '600px', width: '100%' }}>
-          <h2>Spitting bars with Gemini...</h2>
-          <p style={{ opacity: 0.8, marginBottom: '2rem' }}>Please wait while the AI writes the ultimate diss tracks.</p>
+        <div className="gen-screen">
+          <h1 className="glitch-text" data-text="COOKING">COOKING</h1>
 
-          <div style={{ width: '100%', marginBottom: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span>Writing Verses</span>
-              <span>{versesGenerated} / {settings.numVerses * 2}</span>
+          <div className="gen-bars">
+            <div className="gen-row">
+              <span>BARS</span>
+              <div className="progress-bar">
+                <div className="progress-fill p1-bg" style={{ width: `${versesPct}%` }} />
+              </div>
+              <span className="gen-count">{versesGenerated}/{totalSteps}</span>
             </div>
-            <div style={{ width: '100%', background: 'rgba(255,255,255,0.1)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
-              <div style={{ width: `${(versesGenerated / (settings.numVerses * 2)) * 100}%`, background: 'var(--theme-main)', height: '100%', transition: 'width 0.3s' }} />
-            </div>
-          </div>
-
-          <div style={{ width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span>Synthesizing Vocals</span>
-              <span>{audioGenerated} / {settings.numVerses * 2}</span>
-            </div>
-            <div style={{ width: '100%', background: 'rgba(255,255,255,0.1)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
-              <div style={{ width: `${(audioGenerated / (settings.numVerses * 2)) * 100}%`, background: 'var(--theme-main)', height: '100%', transition: 'width 0.3s' }} />
+            <div className="gen-row">
+              <span>VOICE</span>
+              <div className="progress-bar">
+                <div className="progress-fill p2-bg" style={{ width: `${audioPct}%` }} />
+              </div>
+              <span className="gen-count">{audioGenerated}/{totalSteps}</span>
             </div>
           </div>
         </div>
