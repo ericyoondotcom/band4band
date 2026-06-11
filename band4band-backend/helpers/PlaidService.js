@@ -136,9 +136,13 @@ class PlaidService {
         // Process income separately — use tx.name as fallback since payroll often lacks merchant_name
         incomeResponse.data.transactions.forEach(tx => {
           if (tx.amount < 0) {
-            const sourceName = tx.merchant_name || tx.name;
+            let sourceName = tx.merchant_name || tx.name;
             if (sourceName) {
-              incomeSources.push({ name: sourceName, amount: Math.abs(tx.amount) });
+              // Strip numbers from statement names so the LLM doesn't misinterpret them as dollar amounts
+              sourceName = sourceName.replace(/\d+/g, '').trim();
+              if (sourceName.length > 0) {
+                incomeSources.push({ name: sourceName, amount: Math.abs(tx.amount) });
+              }
             }
           }
         });

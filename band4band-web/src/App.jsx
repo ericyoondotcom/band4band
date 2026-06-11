@@ -1,12 +1,16 @@
-import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { wsClient } from './utils/websocket';
+import { WS_URL } from './utils/env';
 import Home from './components/Home';
 import Lobby from './components/Lobby';
 import VerseConfig from './components/VerseConfig';
 import BattleArena from './components/BattleArena';
 
 function GameFlow() {
+  const navigate = useNavigate();
+  const { roomCodeParam } = useParams();
+  const connectingTo = useRef(null);
   const [gameState, setGameState] = useState('HOME');
   const [roomCode, setRoomCode] = useState('');
   const [players, setPlayers] = useState([]);
@@ -18,9 +22,30 @@ function GameFlow() {
   const [audioGenerated, setAudioGenerated] = useState(0);
 
   useEffect(() => {
+    if (!roomCodeParam) {
+      connectingTo.current = null;
+    } else if (gameState === 'HOME' && connectingTo.current !== roomCodeParam) {
+      connectingTo.current = roomCodeParam;
+      const joinRoom = async () => {
+        try {
+          await wsClient.connect(`${WS_URL}?action=join&code=${roomCodeParam.toUpperCase()}`);
+          setRoomCode(roomCodeParam.toUpperCase());
+          setGameState('LOBBY');
+        } catch (e) {
+          alert("Failed to connect or room not found");
+          connectingTo.current = null;
+          navigate('/', { replace: true });
+        }
+      };
+      joinRoom();
+    }
+  }, [roomCodeParam, gameState, navigate]);
+
+  useEffect(() => {
     const unsubRoom = wsClient.on('ROOM_CREATED', (data) => {
       setRoomCode(data.code);
       setGameState('LOBBY');
+      navigate(`/${data.code}`, { replace: true });
     });
 
     const unsubState = wsClient.on('STATE_UPDATE', (data) => {
@@ -54,6 +79,7 @@ function GameFlow() {
       setBattleSequence([]);
       setVersesGenerated(0);
       setAudioGenerated(0);
+      navigate('/', { replace: true });
     });
 
     return () => {
@@ -114,7 +140,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<GameFlow />} />
+        <Route path="/:roomCodeParam?" element={<GameFlow />} />
       </Routes>
     </BrowserRouter>
   );

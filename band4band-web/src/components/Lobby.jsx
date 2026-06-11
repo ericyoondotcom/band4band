@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { wsClient } from '../utils/websocket';
+import { BACKEND_URL } from '../utils/env';
 
 export default function Lobby({ roomCode, players, settings }) {
   const [name, setName] = useState('');
@@ -13,7 +14,7 @@ export default function Lobby({ roomCode, players, settings }) {
 
   const fetchLinkToken = useCallback(() => {
     const clientUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-    fetch('http://localhost:8080/create_link_token', {
+    fetch(`${BACKEND_URL}/create_link_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientUserId }),

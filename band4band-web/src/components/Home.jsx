@@ -1,29 +1,26 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { wsClient } from '../utils/websocket';
+import { WS_URL } from '../utils/env';
 
 export default function Home({ setGameState, setRoomCode }) {
   const [joinCode, setJoinCode] = useState('');
+  const navigate = useNavigate();
 
   const handleHost = async () => {
     try {
-      await wsClient.connect('ws://localhost:8080?action=host');
+      await wsClient.connect(`${WS_URL}?action=host`);
     } catch (e) {
       alert("Failed to connect to backend");
     }
   };
 
-  const handleJoin = async () => {
+  const handleJoin = () => {
     if (joinCode.length !== 6) {
       alert("Code must be 6 letters");
       return;
     }
-    try {
-      await wsClient.connect(`ws://localhost:8080?action=join&code=${joinCode.toUpperCase()}`);
-      setRoomCode(joinCode.toUpperCase());
-      setGameState('LOBBY');
-    } catch (e) {
-      alert("Failed to connect or room not found");
-    }
+    navigate(`/${joinCode.toUpperCase()}`);
   };
 
   return (

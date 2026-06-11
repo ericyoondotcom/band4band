@@ -1,38 +1,50 @@
 import 'dotenv/config';
 import { WebSocketServer } from 'ws';
 import http from 'http';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import plaidService from './helpers/PlaidService.js';
 import gameManager from './helpers/GameManager.js';
 
-const server = http.createServer((req, res) => {
-  // Add a simple route to generate Plaid link tokens based on client_user_id
-  if (req.method === 'POST' && req.url === '/create_link_token') {
-    let body = '';
-    req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', async () => {
-      try {
-        const { clientUserId } = JSON.parse(body);
-        const linkToken = await plaidService.createLinkToken(clientUserId);
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ link_token: linkToken }));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ error: err.message }));
-      }
-    });
-  } else if (req.method === 'OPTIONS') {
-    // Handle preflight for CORS
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'OPTIONS, POST',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    });
-    res.end();
-  } else {
-    res.writeHead(404);
-    res.end();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+
+app.use(express.json());
+
+// Basic CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'OPTIONS, POST, GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
+
+// Create link token route
+app.post('/create_link_token', async (req, res) => {
+  try {
+    const { clientUserId } = req.body;
+    const linkToken = await plaidService.createLinkToken(clientUserId);
+    res.json({ link_token: linkToken });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
+
+// Secure static hosting - Express static naturally prevents directory traversal
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Fallback for React Router (SPA)
+app.use((req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+const server = http.createServer(app);
 
 const wss = new WebSocketServer({ server });
 
