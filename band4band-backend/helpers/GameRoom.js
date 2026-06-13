@@ -2,6 +2,8 @@ import plaidService from './PlaidService.js';
 import geminiService from './GeminiService.js';
 import * as Prompts from './prompts.js';
 
+const RECONNECT_GRACE_MS = 30_000; // 30 seconds
+
 export default class GameRoom {
   constructor(roomId, onEmpty) {
     this.roomId = roomId;
@@ -10,6 +12,17 @@ export default class GameRoom {
     this.state = 'LOBBY'; // LOBBY, CONFIG, GENERATING, PLAYING
     this.settings = { numVerses: 8 };
     this.onEmpty = onEmpty;
+    // Stored after generation completes so reconnecting players can receive it
+    this.lastBattleSequence = null;
+    this.lastBeatSeed = null;
+  }
+
+  /**
+   * Generate a random reconnect token for a player.
+   */
+  _generateReconnectId() {
+    return Math.random().toString(36).substring(2, 15) +
+           Math.random().toString(36).substring(2, 15);
   }
 
   addPlayer(socket, isHost) {
@@ -21,16 +34,78 @@ export default class GameRoom {
       this.hostId = socket.id;
     }
 
+    const reconnectId = this._generateReconnectId();
+
     this.players[socket.id] = {
       socket,
+      reconnectId,
       name: '',
       nickname: '',
       accessTokens: [],
       isReady: false,
       versesConfig: null,
-      financialData: null
+      financialData: null,
+      disconnectTimer: null
     };
 
+    this._attachSocketHandlers(socket);
+
+    // Send the reconnect token to the client so it can rejoin after a disconnect
+    socket.send(JSON.stringify({ type: 'SESSION_TOKEN', reconnectId, roomCode: this.roomId }));
+
+    this.broadcastState();
+  }
+
+  /**
+   * Reconnect an existing player slot to a new socket.
+   * Called by index.js when a client presents a valid reconnectId.
+   */
+  reconnectPlayer(socket, reconnectId) {
+    const entry = Object.values(this.players).find(p => p.reconnectId === reconnectId);
+    if (!entry) {
+      throw new Error('Invalid reconnect token');
+    }
+
+    // Cancel the pending destroy timer
+    if (entry.disconnectTimer) {
+      clearTimeout(entry.disconnectTimer);
+      entry.disconnectTimer = null;
+    }
+
+    // Remap under the new socket id
+    const oldSocketId = Object.keys(this.players).find(id => this.players[id] === entry);
+    delete this.players[oldSocketId];
+
+    entry.socket = socket;
+    this.players[socket.id] = entry;
+
+    // Update hostId if this was the host
+    if (this.hostId === oldSocketId) {
+      this.hostId = socket.id;
+    }
+
+    this._attachSocketHandlers(socket);
+
+    // Send full state so the client can fast-forward to where the game is
+    const reconnectPayload = {
+      type: 'RECONNECTED',
+      state: this.state,
+      settings: this.settings,
+      roomCode: this.roomId,
+      reconnectId: entry.reconnectId
+    };
+
+    // If the game is already done generating, send the full battle sequence
+    if (this.state === 'PLAYING' && this.lastBattleSequence) {
+      reconnectPayload.sequence = this.lastBattleSequence;
+      reconnectPayload.beatSeed = this.lastBeatSeed;
+    }
+
+    socket.send(JSON.stringify(reconnectPayload));
+    this.broadcastState();
+  }
+
+  _attachSocketHandlers(socket) {
     socket.on('message', async (message) => {
       try {
         const data = JSON.parse(message);
@@ -41,18 +116,36 @@ export default class GameRoom {
     });
 
     socket.on('close', () => {
-      this.removePlayer(socket.id);
+      this._handleDisconnect(socket.id);
     });
+  }
 
-    this.broadcastState();
+  _handleDisconnect(socketId) {
+    const player = this.players[socketId];
+    if (!player) return;
+
+    console.log(`[GameRoom ${this.roomId}] Player ${socketId} disconnected. Starting ${RECONNECT_GRACE_MS / 1000}s grace period.`);
+
+    // Notify remaining players
+    this.broadcast({ type: 'OPPONENT_DISCONNECTED', gracePeriodMs: RECONNECT_GRACE_MS });
+
+    player.disconnectTimer = setTimeout(() => {
+      console.log(`[GameRoom ${this.roomId}] Grace period expired for ${socketId}. Destroying room.`);
+      this.removePlayer(socketId);
+    }, RECONNECT_GRACE_MS);
   }
 
   removePlayer(socketId) {
+    const player = this.players[socketId];
+    if (player && player.disconnectTimer) {
+      clearTimeout(player.disconnectTimer);
+    }
     delete this.players[socketId];
+
     if (Object.keys(this.players).length === 0) {
       this.destroy();
     } else {
-      // If one leaves, the game is over as per requirements
+      // If one player permanently leaves, the game is over
       this.destroy();
     }
   }
@@ -232,10 +325,14 @@ export default class GameRoom {
         }
       });
 
+      // Cache for reconnecting players
+      this.lastBattleSequence = battleSequence;
+      this.lastBeatSeed = Math.random();
+
       this.broadcast({
         type: 'GAME_READY',
         sequence: battleSequence,
-        beatSeed: Math.random()
+        beatSeed: this.lastBeatSeed
       });
 
     } catch (e) {
@@ -297,7 +394,7 @@ export default class GameRoom {
   broadcast(messageObj) {
     const msgString = JSON.stringify(messageObj);
     Object.values(this.players).forEach(p => {
-      if (p.socket.readyState === 1) { // OPEN
+      if (p.socket && p.socket.readyState === 1) { // OPEN
         p.socket.send(msgString);
       }
     });
@@ -322,15 +419,22 @@ export default class GameRoom {
 
   destroy() {
     console.log(`Destroying room ${this.roomId}`);
+    // Cancel any pending grace period timers
+    Object.values(this.players).forEach(p => {
+      if (p.disconnectTimer) clearTimeout(p.disconnectTimer);
+    });
+    // Notify remaining connected players
+    this.broadcast({ type: 'ROOM_DESTROYED', message: 'The room has been closed.' });
     // Clear sensitive data
     Object.values(this.players).forEach(p => {
       p.accessTokens = [];
       p.financialData = null;
-      if (p.socket.readyState === 1) {
+      if (p.socket && p.socket.readyState === 1) {
         p.socket.close();
       }
     });
     this.players = {};
+    this.lastBattleSequence = null;
     if (this.onEmpty) {
       this.onEmpty(this.roomId);
     }

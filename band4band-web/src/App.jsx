@@ -20,6 +20,7 @@ function GameFlow() {
   const [isMuted, setIsMuted] = useState(false);
   const [versesGenerated, setVersesGenerated] = useState(0);
   const [audioGenerated, setAudioGenerated] = useState(0);
+  const [reconnectStatus, setReconnectStatus] = useState(null); // null | { attempt, maxRetries }
 
   useEffect(() => {
     if (!roomCodeParam) {
@@ -71,8 +72,50 @@ function GameFlow() {
       setAudioGenerated(data.audioGenerated);
     });
 
+    // ── Reconnection events ────────────────────────────────────────────────
+
+    const unsubReconnecting = wsClient.on('RECONNECTING', (data) => {
+      setReconnectStatus({ attempt: data.attempt, maxRetries: data.maxRetries });
+    });
+
+    const unsubReconnected = wsClient.on('RECONNECTED', (data) => {
+      // Server sends full current state on reconnect
+      setReconnectStatus(null);
+      setRoomCode(data.roomCode || roomCode);
+
+      if (data.state) setGameState(data.state);
+      if (data.settings) setSettings(data.settings);
+
+      // If already in PLAYING state, restore the battle sequence
+      if (data.state === 'PLAYING' && data.sequence) {
+        setBattleSequence(data.sequence);
+        setBeatSeed(data.beatSeed);
+      }
+    });
+
+    const unsubReconnectSuccess = wsClient.on('RECONNECT_SUCCESS', () => {
+      setReconnectStatus(null);
+    });
+
+    const unsubOpponentDisconnected = wsClient.on('OPPONENT_DISCONNECTED', (data) => {
+      setReconnectStatus({ opponentWaiting: true, gracePeriodMs: data.gracePeriodMs });
+    });
+
+    const unsubRoomDestroyed = wsClient.on('ROOM_DESTROYED', () => {
+      // Server explicitly told us the room is gone — reset cleanly
+      setReconnectStatus(null);
+      setGameState('HOME');
+      setRoomCode('');
+      setPlayers([]);
+      setBattleSequence([]);
+      setVersesGenerated(0);
+      setAudioGenerated(0);
+      navigate('/', { replace: true });
+    });
+
+    // Final disconnect — all retries exhausted or intentional close
     const unsubDisconnect = wsClient.on('DISCONNECT', () => {
-      alert("Disconnected.");
+      setReconnectStatus(null);
       setGameState('HOME');
       setRoomCode('');
       setPlayers([]);
@@ -88,6 +131,11 @@ function GameFlow() {
       unsubReady();
       unsubError();
       unsubProgress();
+      unsubReconnecting();
+      unsubReconnected();
+      unsubReconnectSuccess();
+      unsubOpponentDisconnected();
+      unsubRoomDestroyed();
       unsubDisconnect();
     };
   }, []);
@@ -105,6 +153,19 @@ function GameFlow() {
       >
         {isMuted ? '🔇' : '🔊'}
       </button>
+
+      {/* ── Reconnection / opponent-disconnect banner ── */}
+      {reconnectStatus && (
+        <div className="reconnect-banner">
+          {reconnectStatus.opponentWaiting ? (
+            <span>⚠️ Opponent disconnected — waiting for them to reconnect…</span>
+          ) : (
+            <span>
+              🔄 Reconnecting… (attempt {reconnectStatus.attempt}/{reconnectStatus.maxRetries})
+            </span>
+          )}
+        </div>
+      )}
 
       {gameState === 'HOME' && <Home setGameState={setGameState} setRoomCode={setRoomCode} />}
       {gameState === 'LOBBY' && <Lobby roomCode={roomCode} players={players} settings={settings} />}
